@@ -1,0 +1,39 @@
+# Local development stack.
+#
+# This is what you run day to day. The Kubernetes manifests in k8s/ run the same image and
+# exist so the deployment target is not a surprise at Step 9 — not because a cluster is needed
+# to develop against one service.
+
+services:
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    image: ebbatrust/api:dev
+    container_name: ebbatrust-api
+    restart: unless-stopped
+    ports:
+      - '8080:8080'
+    environment:
+      NODE_ENV: development
+      PORT: '8080'
+      HOST: 0.0.0.0
+      LOG_LEVEL: debug
+      # mock until an agreement, licence and credentials exist. See AGENTS.md 4.3.
+      ADAPTER_MODE: mock
+    # Real values live in backend/.env, which is gitignored and never committed.
+    env_file:
+      - path: .env
+        required: false
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 3s
+      start_period: 10s
+      retries: 3

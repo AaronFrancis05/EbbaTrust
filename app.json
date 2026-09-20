@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "EbbaTrust",
+    "slug": "ebbatrust",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "ebbatrust",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "platforms": ["ios", "android"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "ug.ebbatrust.app"
+    },
+    "android": {
+      "package": "ug.ebbatrust.app",
+      "adaptiveIcon": {
+        "backgroundColor": "#0C447C"
+      },
+      "edgeToEdgeEnabled": true
+    },
+    "plugins": ["expo-router"],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

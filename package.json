@@ -1,0 +1,51 @@
+{
+  "name": "ebbatrust",
+  "version": "0.1.0",
+  "private": true,
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start",
+    "start:dev": "expo start --dev-client",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "check:invariants": "node scripts/check-invariants.mjs",
+    "check": "npm run typecheck && npm run typecheck:backend && npm run lint && npm run check:invariants",
+    "format": "prettier --write \"**/*.{ts,tsx,js,json,md}\"",
+    "typecheck:backend": "tsc --noEmit -p backend/api/tsconfig.json",
+    "backend:up": "docker compose -f backend/compose.yaml up --build -d",
+    "backend:down": "docker compose -f backend/compose.yaml down",
+    "backend:logs": "docker compose -f backend/compose.yaml logs -f api"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.103.1",
+    "expo": "^57.0.24",
+    "expo-constants": "~57.0.19",
+    "expo-linking": "~57.0.10",
+    "expo-router": "~57.0.22",
+    "expo-status-bar": "~57.0.1",
+    "lucide-react-native": "^1.47.0",
+    "nativewind": "^4.2.7",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-gesture-handler": "~2.32.0",
+    "react-native-reanimated": "4.5.1",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "~4.26.0",
+    "react-native-svg": "15.15.4"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@typescript-eslint/parser": "^8.70.0",
+    "eslint": "^9.39.5",
+    "eslint-config-expo": "^57.0.2",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-import-resolver-typescript": "^4.4.5",
+    "prettier": "^3.9.8",
+    "prettier-plugin-tailwindcss": "^0.8.1",
+    "tailwindcss": "^3.4.19",
+    "typescript": "^5.9.3"
+  }
+}
