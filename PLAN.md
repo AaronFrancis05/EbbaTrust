@@ -3,7 +3,8 @@
 The build sequence for the EbbaTrust mobile prototype.
 Operating rules live in [AGENTS.md](AGENTS.md). Live progress lives in [MEMORY.md](MEMORY.md).
 
-**Status:** Steps 0-3 complete. Step 4 next.
+**Status:** Steps 0-4 complete (Step 4 applied locally; the hosted apply is outstanding).
+Step 5 next.
 **Last updated:** 2026-09-20
 
 ---
@@ -175,13 +176,98 @@ structure, §4.1, §4.3, new §4.6, §5.2, §6, §9), because it still described
 `src/services/adapters/`. Leaving it stale would have had `/review` check the app against rules
 that no longer describe it.
 
-### Step 4 — Data model ← NEXT
-PostGIS schema in `backend/db/migrations/`: `profiles`, `parcels` (`geometry(Polygon, 4326)`),
-`listings`, `verification_requests`, `verification_results`, `escrow_transactions`,
-`audit_log`. RLS on every table, deny-by-default, as the second wall behind the API.
-Seeded with real Ugandan districts and plausible polygons.
-**Done when:** migrations apply; a spatial query through the API returns seeded parcels; an
-anonymous direct query returns zero rows.
+### Step 4 — Data model ✅ COMPLETE (locally)
+Eight numbered migrations in `backend/db/migrations/` covering all seven tables, applied to a
+local `postgis/postgis:17-3.5` container added to `backend/compose.yaml`. The same files are
+written to apply unchanged to the hosted project — **that apply has not happened yet** (see
+open question 2).
+
+- **RLS deny-all, zero policies** (`0008_rls.sql`), plus `REVOKE` on `anon`/`authenticated`
+  and `force row level security`. One file holds the whole posture so it reads at a glance.
+- **NIN is hashed**, never stored in plaintext: `nin_hash` + `nin_last4`, pepper in the
+  backend environment. A database dump leaks no national IDs. Accepted cost: re-verification
+  needs the user to re-enter it.
+- **`is_demo_data` is NOT NULL with no default** on `verification_results` — a result cannot
+  be written without declaring its provenance (AGENTS.md §5.3).
+- **`audit_log` is append-only by trigger**, not by convention. `UPDATE` and `DELETE` raise.
+- **Seed is outside the migration chain** (`backend/db/seed.sql`, `npm run db:seed`), so demo
+  parcels cannot reach production by running the chain. Areas are derived from the polygons
+  rather than typed, so the demo data contains no discrepancy of its own making.
+- `backend/db/apply.mjs` — ordered runner with a checksum ledger, refusing to re-run an
+  applied file whose contents changed. Runs psql inside the `db` container, so Docker is the
+  only prerequisite. `npm run db:up | db:status | db:migrate | db:seed | db:reset`.
+- API gained `backend/api/src/db/` (pool + parcel repository) and `GET /parcels`,
+  `GET /parcels/:id`. `/ready` now reaches the database and returns 503 when it cannot.
+- `DATABASE_URL` is **required**: the service exits at boot rather than serving 500s.
+- `scripts/check-invariants.mjs` gained **Invariant 4** — every table created in a migration
+  must be named in `*_rls.sql` — and Invariant 3 now also bans a connection string or the
+  Postgres driver from the app.
+- **fastify 5.6.1 → 5.12.5.** `npm audit` reported five advisories against 5.6.1, one of them
+  spoofing `request.protocol`/`request.host` via `X-Forwarded-*`, which matters because this
+  service runs with `trustProxy: true`. Now reports 0 vulnerabilities.
+
+**Verified:** all eight migrations apply from empty; `db:reset` rebuilds the schema and
+re-seeds; re-running `db:migrate` is a no-op. `GET /parcels?district=Wakiso` and
+`?bbox=32.5,0.3,32.7,0.45` return seeded parcels with GeoJSON boundaries; `EXPLAIN` confirms
+`parcels_boundary_gix` is used for bbox queries. Eight constraint tests all rejected: invalid
+polygon, negative price, a result with no `is_demo_data`, buyer equal to seller, two live
+escrows on one listing, and `UPDATE`/`DELETE` on `audit_log`. As `anon` and as
+`authenticated`: permission denied on every table; with `SELECT` granted back, RLS still
+returns **zero rows**. The API refuses to boot with no `DATABASE_URL`. `npm run check` clean.
+
+**Caught by the reset, not by the build:** PostGIS installs into the `extensions` schema after
+a rebuild — exactly where Supabase puts it — and the API could not resolve a single spatial
+function. The pool now pins `search_path=public,extensions` on every connection. Applying to
+the hosted project first would have found this there instead.
+
+**`/review` findings — resolved the same session, except the apply itself:**
+1. ~~`apply.mjs --url` puts the password in `ps`~~ — `--url` is now **refused**. `--remote`
+   reads `TARGET_DATABASE_URL` from `backend/.env` or the environment and hands it to psql as
+   a `\connect` line **over stdin**, so no password is ever an argument to any process.
+   `seed --remote` demands `SEED_REMOTE=yes`; `reset` refuses `--remote` outright.
+2. ~~Two migration ledgers~~ — decided: **`backend/db/apply.mjs` is the only thing that applies
+   migrations, to any environment.** Not the Supabase CLI, not the MCP, not the SQL editor.
+   One ledger, `public.schema_migrations`. Read the hosted project with anything; apply with this.
+3. ~~`escrow_transactions.funded_at` unconstrained~~ — `0009` adds
+   `escrow_funded_at_present`: `funded`, `conditions_met` and `released` all require a
+   `funded_at`. `disputed` and `refunded` deliberately do not — a dispute can start before
+   funding, and an escrow abandoned at `opened` is refunded with no money ever having moved.
+4. ~~The hosted apply~~ — ✅ **done and verified.** All nine migrations are applied to
+   `jytkcgqoczuijgrazhjk`; the ledger holds nine rows whose checksums match the local ones
+   exactly. On the hosted project: PostGIS in `extensions`, 7 enum types, RLS enabled and
+   forced on all seven tables, **zero policies, zero grants to `anon`/`authenticated`**, and
+   `set role anon; select from parcels` returns **permission denied**. The `profiles_id_fkey`
+   to `auth.users` is present there and correctly absent locally — the one real environment
+   difference, behaving as the guarded block intended. Security advisors report only INFO
+   `rls_enabled_no_policy`, which is the design.
+
+   **The runner reported failure after succeeding.** The batched apply ran server-side to
+   completion and wrote all nine ledger rows; the client then waited for a reply that never
+   came and was killed at the 120s timeout. A timeout from this runner is not evidence that
+   nothing applied — read the ledger before concluding anything.
+
+   Two things were fixed in the attempt:
+   - **One connection for the whole apply**, not one per migration. Each psql invocation is a
+     fresh connection, DNS lookup and pooler session; a dozen of them against a remote host is
+     how the first run hit a DNS failure and then a hang. Each file still runs in its own
+     transaction, so a partial run stays resumable.
+   - **The ledger is no longer readable by `anon`.** Supabase's advisor caught that
+     `public.schema_migrations` is created by the runner rather than by a migration, so `0008`
+     never saw it — a complete map of the schema's history, exposed to anyone with the anon
+     key. The runner now enables RLS and revokes both roles as it creates the table.
+
+   Also learned: **a wrong password on the Supabase pooler hangs rather than failing.** The
+   connection is accepted and then never answered, and libpq's `connect_timeout` does not
+   cover it. The runner now aborts after 120s and says so.
+5. **Still open by design: `GET /parcels` is unauthenticated** until Step 5 puts JWT
+   verification in front of it. Do not expose the API beyond localhost until then.
+
+**Also in 0009:** `alter database ... set search_path to "$user", public, extensions`. The
+pool pins the same path per connection, but anything else that connects — psql, a GUI client,
+a pooler that drops startup options — would not have it, and without `extensions` on the path
+no PostGIS function resolves at all. Supabase's **transaction pooler (port 6543) drops
+connection options**, which is why the database-level setting is the real fix and `pool.ts`
+detects that port and omits the option.
 
 ### Step 5 — Auth + identity
 Supabase phone OTP for Ugandan numbers in the app; the backend verifies the resulting JWT on
@@ -225,7 +311,7 @@ Start these early — they block later steps and are not instant.
 | Need | Blocks | Action |
 |---|---|---|
 | ~~Docker Desktop Kubernetes~~ | Step 3 | ✅ enabled. Context `docker-desktop`, kind-type, 1 node, v1.36.1 |
-| Supabase project | Step 4 | ⚠ See open question 2 — the recorded ref and the reachable account disagree |
+| ~~Supabase project~~ | Step 4 | ✅ resolved — `jytkcgqoczuijgrazhjk` ("EbbaLands", eu-west-1, PG 17.6.1) is live and is the ref recorded here. Schema not yet applied to it. |
 | Google Maps API key | Step 6 | Create Google Cloud project, enable Maps SDK |
 | Mobile-money sandbox | Step 8 | Register now — approval takes time |
 | Container registry | Step 9 | Somewhere to push the API image |
@@ -248,10 +334,14 @@ Reasons for each are in [AGENTS.md §7](AGENTS.md). They are excluded on merit, 
    tree, §4.3 points the adapter boundary at `backend/api/src/adapters/`, and a new §4.6
    ("the server decides, the app displays") makes the escrow and verification rules
    server-authoritative. `scripts/check-invariants.mjs` enforces all of it.
-2. **Supabase project identity.** This plan previously recorded `jytkcgqoczuijgrazhjk`. The
-   Supabase account reachable from this machine contains exactly one project,
-   `llxxcnrdrkshqddxkyxr` ("AaronFrancis05's Project", eu-west-1, Postgres 17.6.1). Resolve
-   before Step 4 applies a single migration.
+2. ~~**Supabase project identity.**~~ ✅ resolved 2026-09-20. The account holds exactly one
+   project: `jytkcgqoczuijgrazhjk`, "EbbaLands", eu-west-1, Postgres 17.6.1, healthy — the ref
+   this plan already recorded. Last session's `llxxcnrdrkshqddxkyxr` was an artifact of a
+   differently scoped MCP connection, not a second project.
+
+   **Still open in its place:** the Step 4 schema has not been applied to it. The apply was
+   refused by the session's permission classifier as a write to a shared resource, and was not
+   worked around. It needs either an explicit go-ahead or a run by hand.
 3. Google Maps API key — existing Google Cloud project, or scaffold with a placeholder?
 4. Mobile-money sandbox — start registration now?
 5. Luganda from the start, or English-only for the prototype? Cheap now, expensive later.

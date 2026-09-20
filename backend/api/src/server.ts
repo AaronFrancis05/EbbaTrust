@@ -5,11 +5,13 @@
  * registered, and only then does the server listen. A misconfigured process fails at startup
  * where it is visible, rather than on the first request that happens to need the missing value.
  */
-import Fastify from 'fastify';
+import Fastify, { type FastifyError } from 'fastify';
 
 import { createAdapters } from './adapters/index.js';
 import { loadConfig } from './config.js';
+import { createPool } from './db/pool.js';
 import { registerHealthRoutes } from './routes/health.js';
+import { registerParcelRoutes } from './routes/parcels.js';
 
 const startedAt = Date.now();
 
@@ -34,8 +36,10 @@ async function main(): Promise<void> {
   });
 
   const adapters = createAdapters(config.adapterMode);
+  const db = createPool(config);
 
-  await registerHealthRoutes(app, { adapters, startedAt });
+  await registerHealthRoutes(app, { adapters, db, startedAt });
+  await registerParcelRoutes(app, { db });
 
   app.setNotFoundHandler(async (request, reply) => {
     await reply.code(404).send({ error: 'not_found', path: request.url });
@@ -44,8 +48,12 @@ async function main(): Promise<void> {
   /**
    * One error path for the whole service. Clients get a stable shape and no internals;
    * the full error goes to the log. Never swallowed, never turned into a 200. AGENTS.md 4.5.
+   *
+   * `error` is annotated: since Fastify 5.12 the handler parameter is `unknown`, because an
+   * async route can reject with anything at all. Narrowing it here keeps one honest shape.
    */
-  app.setErrorHandler(async (error, request, reply) => {
+  app.setErrorHandler(async (raw, request, reply) => {
+    const error = raw as FastifyError;
     request.log.error({ err: error }, 'request failed');
     const status = error.statusCode ?? 500;
     await reply.code(status).send({
@@ -60,6 +68,8 @@ async function main(): Promise<void> {
       app.log.info({ signal }, 'shutting down');
       app
         .close()
+        // Close the pool after the server, so in-flight queries finish first.
+        .then(() => db.end())
         .then(() => process.exit(0))
         .catch((err: unknown) => {
           app.log.error({ err }, 'shutdown failed');

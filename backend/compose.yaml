@@ -5,6 +5,35 @@
 # to develop against one service.
 
 services:
+  # Local Postgres with PostGIS. The hosted Supabase project is the real data layer
+  # (PLAN.md 3.1); this exists so migrations are proven against a throwaway database before
+  # they touch a project anyone depends on, and so `db:reset` is a real option.
+  #
+  # The credentials here are local-only and deliberately boring. Nothing in this file is a
+  # secret, and nothing in this file may ever become one. AGENTS.md 5.2.
+  db:
+    image: postgis/postgis:17-3.5
+    container_name: ebbatrust-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ebbatrust
+      POSTGRES_PASSWORD: ebbatrust
+      POSTGRES_DB: ebbatrust
+      # psql inside this container is how backend/db/apply.mjs talks to any database.
+      PGUSER: ebbatrust
+      PGDATABASE: ebbatrust
+    ports:
+      # Exposed so a GUI client can look at it. The API reaches it over the compose network.
+      - '5432:5432'
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ebbatrust -d ebbatrust']
+      interval: 10s
+      timeout: 3s
+      start_period: 20s
+      retries: 5
+
   api:
     build:
       context: ./api
@@ -21,6 +50,11 @@ services:
       LOG_LEVEL: debug
       # mock until an agreement, licence and credentials exist. See AGENTS.md 4.3.
       ADAPTER_MODE: mock
+      # Inside the compose network the host is the service name, not localhost.
+      DATABASE_URL: postgres://ebbatrust:ebbatrust@db:5432/ebbatrust
+    depends_on:
+      db:
+        condition: service_healthy
     # Real values live in backend/.env, which is gitignored and never committed.
     env_file:
       - path: .env
@@ -37,3 +71,6 @@ services:
       timeout: 3s
       start_period: 10s
       retries: 3
+
+volumes:
+  db-data:

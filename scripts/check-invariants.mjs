@@ -99,6 +99,11 @@ console.log('Invariant 3 - client/server split (AGENTS.md 4.1, 4.6)');
 const CLIENT_FORBIDDEN = [
   { re: /\.from\(\s*['"`]/, what: 'a Supabase table query — call the API in src/services/api/' },
   { re: /service_role|SERVICE_ROLE/, what: 'the service-role key — it belongs in backend/ only' },
+  // Added in Step 4. A database driver or connection string in the app means the phone is
+  // talking to Postgres directly, which puts a credential in the APK and the rules on the
+  // client. AGENTS.md 4.1 and 4.6.
+  { re: /DATABASE_URL/, what: 'a database connection string — the app never connects to Postgres' },
+  { re: /from\s*['"`]pg['"`]|require\(\s*['"`]pg['"`]\s*\)/, what: 'the Postgres driver — the app talks to the API, not the database' },
 ];
 
 let clientChecked = 0;
@@ -115,6 +120,39 @@ for (const file of CLIENT_DIRS.flatMap((dir) => walk(dir))) {
     });
 }
 console.log(`  checked ${clientChecked} client files`);
+
+// -- Invariant 4: no table without the wall (AGENTS.md 5.2) -----------------
+// "A new table without an RLS policy is an incomplete table." Every table created anywhere in
+// backend/db/migrations/ must be named in the migration that enables RLS, so a table added in
+// a hurry cannot ship readable. This is the check that would have caught it.
+console.log('Invariant 4 - RLS covers every table (AGENTS.md 5.2)');
+const MIGRATIONS_DIR = join(ROOT, 'backend', 'db', 'migrations');
+let migrationFiles = [];
+try {
+  migrationFiles = readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();
+} catch {
+  migrationFiles = [];
+}
+
+const rlsFile = migrationFiles.find((f) => /_rls\.sql$/.test(f));
+if (migrationFiles.length > 0 && rlsFile === undefined) {
+  fail('backend/db/migrations/ has migrations but no *_rls.sql to enable row level security');
+} else if (rlsFile !== undefined) {
+  const rlsSrc = readFileSync(join(MIGRATIONS_DIR, rlsFile), 'utf8');
+  const created = new Set();
+  for (const file of migrationFiles) {
+    const src = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
+    for (const match of src.matchAll(/create table (?:if not exists )?public\.(\w+)/gi)) {
+      created.add(match[1]);
+    }
+  }
+  for (const table of created) {
+    if (!rlsSrc.includes(`'${table}'`)) {
+      fail(`table public.${table} is never named in ${rlsFile} — RLS is not enabled on it`);
+    }
+  }
+  console.log(`  checked ${created.size} tables against ${rlsFile}`);
+}
 
 if (failures > 0) {
   console.error(`\n${failures} invariant violation(s). See AGENTS.md.`);

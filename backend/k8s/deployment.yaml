@@ -50,6 +50,8 @@ spec:
             - configMapRef:
                 name: api-config
             # Created from secret.example.yaml with real values — never committed.
+            # Still marked optional so `kubectl apply` of this file alone succeeds, but the
+            # pod will not become ready without DATABASE_URL in it. See secret.example.yaml.
             - secretRef:
                 name: api-secrets
                 optional: true

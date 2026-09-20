@@ -16,7 +16,14 @@
     "typecheck:backend": "tsc --noEmit -p backend/api/tsconfig.json",
     "backend:up": "docker compose -f backend/compose.yaml up --build -d",
     "backend:down": "docker compose -f backend/compose.yaml down",
-    "backend:logs": "docker compose -f backend/compose.yaml logs -f api"
+    "backend:logs": "docker compose -f backend/compose.yaml logs -f api",
+    "db:up": "docker compose -f backend/compose.yaml up -d db",
+    "db:status": "node backend/db/apply.mjs status",
+    "db:migrate": "node backend/db/apply.mjs migrate",
+    "db:seed": "node backend/db/apply.mjs seed",
+    "db:reset": "node backend/db/apply.mjs reset",
+    "db:status:remote": "node backend/db/apply.mjs status --remote",
+    "db:migrate:remote": "node backend/db/apply.mjs migrate --remote"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.103.1",
